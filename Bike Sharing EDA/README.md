@@ -1,4 +1,4 @@
-# Exploratory Analysis of Bike Sharing Usage — DATA 5321 Project (Part 1 of 4 Phases)
+# Exploratory Analysis of Bike Sharing Usage — Project In-Progess (Part 1 of 4 Phases)
 
 This project is the first phase of a four‑part analysis focused on understanding how various factors influence daily bike‑sharing usage. Using the bike‑sharing dataset provided for the course, this phase centers on exploratory data analysis and initial regression modeling to uncover relationships between daily usage counts and key predictor variables.
 
