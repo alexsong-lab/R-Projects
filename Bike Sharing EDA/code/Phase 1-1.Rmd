@@ -1,0 +1,230 @@
+---
+title: "Project Phase 1"
+author: "Alex Song"
+date: "2026-01-26"
+output: html_document
+---
+
+- instant: record index
+- dteday : date
+c - season : season (1:springer, 2:summer, 3:fall, 4:winter)
+c - yr : year (0: 2011, 1:2012)
+c - mnth : month ( 1 to 12)
+c - holiday : weather day is holiday or not (extracted from http://dchr.dc.gov/page/holiday-schedule)
+c - weekday : day of the week
+c - workingday : if day is neither weekend nor holiday is 1, otherwise is 0.
+c - weathersit : 
+    - 1: Clear, Few clouds, Partly cloudy, Partly cloudy
+    - 2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
+    - 3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
+    - 4: Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog
+
+- temp : Normalized temperature in Celsius. The values are divided to 41 (max)
+- atemp: Normalized feeling temperature in Celsius. The values are divided to 50 (max)
+- hum: Normalized humidity. The values are divided to 100 (max)
+- windspeed: Normalized wind speed. The values are divided to 67 (max)
+- casual: count of casual users
+- registered: count of registered users
+- cnt: count of total rental bikes including both casual and registered
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+```
+
+##### Loading and preparing the data
+```{r}
+bike <- read.csv("C:/Users/alexm/Desktop/DATA 5321/Project/bike_sharing_daily.csv")
+#head(bike)
+
+# Training - 2011 (yr = 0), Test - 2012 (yr = 1)
+bike_2011 <- bike %>%
+  filter(yr == 0) %>%
+  select(-instant, -yr)
+
+bike_2012 <- bike %>%
+  filter(yr == 1) %>%
+  select(-instant, -yr)
+
+# Factorize categorical variables
+cat_vars <- c("season", "mnth", "holiday", "weekday", "workingday", "weathersit")
+
+bike_2011 <- bike_2011 %>%
+  mutate(across(all_of(cat_vars), as.factor))
+
+bike_2012 <- bike_2012 %>%
+  mutate(across(all_of(cat_vars), as.factor))
+
+#str(bike_2011)
+#str(bike_2012)
+
+# temp, atemp, hum, windspeed, casual, registered, cnt
+```
+
+## Part 1
+**Numerical and Categorical Variable Summary**
+```{r}
+# summary statistics for all numeric variables
+bike_2011 %>%
+  select(where(is.numeric)) %>%
+  summary()
+
+# frequency table for categorical variables
+for (v in cat_vars) {
+  cat("\n", v, ":\n", sep = "")
+  print(table(bike_2011[[v]]))
+}
+```
+
+**Correlation Matrix**
+```{r}
+# correlation matrix for numerical variables; omitted casual and registered since it's breakdowns of cnt
+matrix <- bike_2011 %>%
+  select(temp, atemp, hum, windspeed, cnt) %>%
+  cor()
+round(matrix, 3)
+```
+
+**Boxplot of Categorical Variables**
+```{r}
+# season, mnth, holiday, weekday, workingday, weathersit
+for (v in cat_vars) {
+  p <- ggplot(bike_2011, aes_string(x = v, y = "cnt")) +
+    geom_boxplot(fill = "lightblue") +
+    labs(title = paste("Daily Count by", v),
+         x = v, y = "Daily Count (cnt)") +
+    theme_minimal()
+  print(p)
+}
+```
+
+**Histogram of Numeric Variables**
+```{r}
+num_vars <- c("temp", "atemp", "hum", "windspeed", "cnt")
+
+for (v in num_vars) {
+  p <- ggplot(bike_2011, aes_string(x = v)) +
+    geom_histogram(fill = "salmon", color = "white", bins = 20) +
+    labs(title = paste("Distribution of", v),
+         x = v, y = "Frequency") +
+    theme_minimal()
+  print(p)
+}
+```
+
+## Part 2
+lm(formula = response ~ predictor
+```{r}
+# Predictors
+numeric_preds <- c("temp", "atemp", "hum", "windspeed")
+categorical_preds <- c("season", "mnth", "holiday", "weekday", "workingday", "weathersit")
+all_preds <- c(categorical_preds, numeric_preds)
+
+# Fit each model
+for (i in seq_along(all_preds)) {
+  p <- all_preds[i]
+  
+  cat("\n", i, ". Regression: cnt ~ ", p, "\n", sep = "")
+  
+  model <- lm(reformulate(p, response = "cnt"), data = bike_2011)
+  print(summary(model))
+}
+```
+
+## Part 3
+summary(lm(
+```{r}
+# Model 1 - additive
+cat("\nModel 1 (Additive): cnt ~ temp + season\n")
+model1a <- lm(cnt ~ temp + season, data = bike_2011)
+summary(model1a)
+
+# Model 1 - interaction effect
+cat("\nModel 1 (Interaction): cnt ~ temp * season\n")
+model1b <- lm(cnt ~ temp * season, data = bike_2011)
+summary(model1b)
+
+# Model 2 - add
+cat("\n Model 2 (Additive): cnt ~ temp + weathersit \n")
+model2a <- lm(cnt ~ temp + weathersit, data = bike_2011)
+print(summary(model2a))
+
+# Model 2 - inter
+cat("\n Model 2 (Interaction): cnt ~ temp * weathersit \n")
+model2b <- lm(cnt ~ temp * weathersit, data = bike_2011)
+print(summary(model2b))
+
+# Model 3 -add
+cat("\n Model 3 (Additive): cnt ~ workingday + weathersit \n")
+model3a <- lm(cnt ~ workingday + weathersit, data = bike_2011)
+print(summary(model3a))
+
+# Model 3 - inter
+cat("\n Model 3 (Interaction): cnt ~ workingday * weathersit \n")
+model3b <- lm(cnt ~ workingday * weathersit, data = bike_2011)
+print(summary(model3b))
+
+```
+
+## Part 4
+**Backward Selection**
+```{r}
+full_model <- lm(
+  cnt ~ season + mnth + holiday + weekday + workingday +
+    weathersit + temp + atemp + hum + windspeed +
+    temp:season + temp:weathersit + workingday:weathersit,
+  data = bike_2011
+)
+
+cat("\n Full Model \n")
+print(summary(full_model))
+
+# Backward selection
+cat("\n Final Model \n")
+final_model <- step(full_model, direction = "backward")
+print(summary(final_model))
+```
+
+
+## Part 5
+**Model Performance: Training vs Test**
+```{r}
+# Training metrics for comparison
+rmse_2011 <- sqrt(mean(residuals(final_model)^2))
+mae_2011 <- mean(abs(residuals(final_model)))
+
+# Predictions for 2012
+bike_2012$pred_cnt <- predict(final_model, newdata = bike_2012)
+bike_2012$resid <- bike_2012$cnt - bike_2012$pred_cnt
+
+# Performance metrics
+rmse_2012 <- sqrt(mean(bike_2012$resid^2))
+mae_2012  <- mean(abs(bike_2012$resid))
+
+cat("Model Performance on 2012: Test Data\n")
+cat("RMSE :", round(rmse_2012, 2), "\n")
+cat("MAE  :", round(mae_2012, 2), "\n")
+
+cat("\nComparison with 2011 v 2012 Data\n")
+cat("Training RMSE (2011) :", round(rmse_2011, 2), "\n")
+cat("Test RMSE (2012)     :", round(rmse_2012, 2), "\n")
+cat("Difference           :", round(rmse_2012 - rmse_2011, 2), "\n")
+cat("\n")
+cat("Training MAE (2011) :", round(mae_2011, 2), "\n")
+cat("Test MAE (2012)     :", round(mae_2012, 2), "\n")
+cat("Difference          :", round(mae_2012 - mae_2011, 2), "\n")
+```
+
+**Observed vs Predicted:**
+```{r}
+ggplot(bike_2012, aes(x = pred_cnt, y = cnt)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 1) +
+  labs(title = "Observed vs Predicted Counts (2012 Test Data)",
+       x = "Predicted Daily Count", 
+       y = "Observed Daily Count") +
+  theme_minimal()
+
+```
+

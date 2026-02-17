@@ -1,0 +1,160 @@
+---
+title: "Weather - Precipitation"
+author: "Group - Alex Song, Vincent Chan, Muykhim Ing, Jimmy Nam"
+date: "2025-10-28"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup}
+library(nycflights13)
+library(tidyverse)
+library(infer)
+library(ggplot2)
+```
+
+## Load and Transform Data
+```{r}
+UA_flights <- flights %>%
+  filter(carrier == "UA")
+
+weather_df <- weather
+
+flights_weather <- UA_flights %>%
+  inner_join(weather_df, by = c("year", "month", "day", "hour", "origin")) %>%
+  mutate(
+    late = dep_delay > 0 & dep_delay <= 30,
+    very_late = dep_delay > 30
+  ) %>%
+  filter(!is.na(dep_delay))
+
+flights_with_gain_per_hour <- flights_weather %>%
+  mutate(
+    net_gain = dep_delay - arr_delay,
+    duration_hours = air_time / 60,
+    gain_per_hour = net_gain / duration_hours
+  ) %>%
+  filter(!is.na(gain_per_hour), !is.na(air_time), air_time > 0)
+
+```
+
+## Gain Per Hour Analysis - Late vs. Not Late
+```{r}
+cat("Late (0-30 min delay) vs Not Late Flights\n")
+
+# Summary statistics
+gain_per_hour_late_summary <- flights_with_gain_per_hour %>%
+  group_by(late) %>%
+  summarise(
+    n = n(),
+    mean_gain_per_hour = mean(gain_per_hour, na.rm = TRUE),
+    median_gain_per_hour = median(gain_per_hour, na.rm = TRUE),
+    sd_gain_per_hour = sd(gain_per_hour, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(gain_per_hour_late_summary)
+cat("\n")
+
+# Observed difference in means
+observed_diff_late <- gain_per_hour_late_summary$mean_gain_per_hour[gain_per_hour_late_summary$late == TRUE] -
+  gain_per_hour_late_summary$mean_gain_per_hour[gain_per_hour_late_summary$late == FALSE]
+
+cat("Observed difference in mean gain per hour (Late - Not Late):",
+    round(observed_diff_late, 2), "minutes/hour\n\n")
+
+# Bootstrap CI
+ci_late <- flights_with_gain_per_hour %>%
+  specify(response = gain_per_hour, explanatory = late) %>%
+  generate(reps = 10^4, type = "bootstrap") %>%
+  calculate(stat = "diff in means", order = c(TRUE, FALSE)) %>%
+  get_ci(level = 0.95)
+
+cat("95% Bootstrap Confidence Interval for difference:\n")
+cat(sprintf("  [%.2f, %.2f] minutes/hour\n\n", ci_late$lower_ci, ci_late$upper_ci))
+
+# Boxplot
+p1 <- ggplot(flights_with_gain_per_hour, aes(x = late, y = gain_per_hour, fill = late)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  scale_x_discrete(labels = c("Not Late", "Late (0-30 min)")) +
+  scale_fill_manual(values = c("steelblue", "coral")) +
+  labs(title = "Gain Per Hour: Late vs Not Late Flights",
+       x = "Departure Status", y = "Gain per Hour (minutes/hour)") +
+  theme_minimal() + theme(legend.position = "none") +
+  coord_cartesian(ylim = c(-50, 50))
+
+print(p1)
+
+# Histogram
+p2 <- ggplot(flights_with_gain_per_hour, aes(x = gain_per_hour, fill = late)) +
+  geom_histogram(aes(y = after_stat(density)), alpha = 0.5,
+                 position = "identity", bins = 50) +
+  scale_fill_manual(values = c("steelblue", "coral"),
+                    labels = c("Not Late", "Late (0-30 min)")) +
+  labs(title = "Distribution of Gain Per Hour by Departure Status",
+       x = "Gain Per Hour (minutes/hour)", y = "Density", fill = "Status") +
+  theme_minimal() + coord_cartesian(xlim = c(-50, 50))
+
+print(p2)
+```
+
+## Gain Per Hour Analysis - Very Late vs. All Other Flights
+```{r}
+cat("Very Late (>30 min delay) vs All Other Flights\n")
+
+# Summary statistics
+gain_per_hour_very_late_summary <- flights_with_gain_per_hour %>%
+  group_by(very_late) %>%
+  summarise(
+    n = n(),
+    mean_gain_per_hour = mean(gain_per_hour, na.rm = TRUE),
+    median_gain_per_hour = median(gain_per_hour, na.rm = TRUE),
+    sd_gain_per_hour = sd(gain_per_hour, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(gain_per_hour_very_late_summary)
+cat("\n")
+
+# Observed difference in means
+observed_diff_very_late <- gain_per_hour_very_late_summary$mean_gain_per_hour[gain_per_hour_very_late_summary$very_late == TRUE] -
+  gain_per_hour_very_late_summary$mean_gain_per_hour[gain_per_hour_very_late_summary$very_late == FALSE]
+
+cat("Observed difference in mean gain per hour (Very Late - Not Very Late):",
+    round(observed_diff_very_late, 2), "minutes/hour\n\n")
+
+# Bootstrap CI
+ci_very_late <- flights_with_gain_per_hour %>%
+  specify(response = gain_per_hour, explanatory = very_late) %>%
+  generate(reps = 10^4, type = "bootstrap") %>%
+  calculate(stat = "diff in means", order = c(TRUE, FALSE)) %>%
+  get_ci(level = 0.95)
+
+cat("95% Bootstrap Confidence Interval for difference:\n")
+cat(sprintf("  [%.2f, %.2f] minutes/hour\n\n", ci_very_late$lower_ci, ci_very_late$upper_ci))
+
+# Boxplot
+p3 <- ggplot(flights_with_gain_per_hour, aes(x = very_late, y = gain_per_hour, fill = very_late)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  scale_x_discrete(labels = c("Not Very Late", "Very Late (>30 min)")) +
+  scale_fill_manual(values = c("steelblue", "coral")) +
+  labs(title = "Gain Per Hour: Very Late vs All Other Flights",
+       x = "Departure Status", y = "Gain per Hour (minutes/hour)") +
+  theme_minimal() + theme(legend.position = "none") +
+  coord_cartesian(ylim = c(-50, 50))
+
+print(p3)
+
+# Histogram
+p4 <- ggplot(flights_with_gain_per_hour, aes(x = gain_per_hour, fill = very_late)) +
+  geom_histogram(aes(y = after_stat(density)), alpha = 0.5,
+                 position = "identity", bins = 50) +
+  scale_fill_manual(values = c("steelblue", "coral"),
+                    labels = c("Not Very Late", "Very Late (>30 min)")) +
+  labs(title = "Distribution of Gain Per Hour by Departure Status",
+       x = "Gain Per Hour (minutes/hour)", y = "Density", fill = "Status") +
+  theme_minimal() + coord_cartesian(xlim = c(-50, 50))
+
+print(p4)
+```
+
