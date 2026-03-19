@@ -1,0 +1,291 @@
+---
+title: "Project Phase 2"
+author: "Alex Song"
+date: "2026-03-07"
+output:
+  html_document: default
+  word_document: default
+---
+
+- instant: record index
+- dteday : date
+c - season : season (1:springer, 2:summer, 3:fall, 4:winter)
+c - yr : year (0: 2011, 1:2012)
+c - mnth : month ( 1 to 12)
+c - holiday : weather day is holiday or not (extracted from http://dchr.dc.gov/page/holiday-schedule)
+c - weekday : day of the week
+c - workingday : if day is neither weekend nor holiday is 1, otherwise is 0.
+c - weathersit : 
+    - 1: Clear, Few clouds, Partly cloudy, Partly cloudy
+    - 2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
+    - 3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
+    - 4: Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog
+
+- temp : Normalized temperature in Celsius. The values are divided to 41 (max)
+- atemp: Normalized feeling temperature in Celsius. The values are divided to 50 (max)
+- hum: Normalized humidity. The values are divided to 100 (max)
+- windspeed: Normalized wind speed. The values are divided to 67 (max)
+- casual: count of casual users
+- registered: count of registered users
+- cnt: count of total rental bikes including both casual and registered
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(glmnet)
+library(pls)
+library(mgcv)
+```
+
+### Loading and preparing the data
+```{r}
+set.seed(123)
+
+bike <- read.csv("C:/Users/alexm/Desktop/DATA 5321/Project/bike_sharing_daily.csv")
+#head(bike)
+
+# Reset Bike Data
+# Training - 2011 (yr = 0), Test - 2012 (yr = 1)
+bike_2011 <- bike %>%
+  filter(yr == 0) %>%
+  select(-instant, -yr)
+
+bike_2012 <- bike %>%
+  filter(yr == 1) %>%
+  select(-instant, -yr)
+
+# Factorize categorical variables
+cat_vars <- c("season", "mnth", "holiday", "weekday", "workingday", "weathersit")
+
+bike_2011 <- bike_2011 %>%
+  mutate(across(all_of(cat_vars), as.factor))
+
+bike_2012 <- bike_2012 %>%
+  mutate(across(all_of(cat_vars), as.factor))
+
+```
+
+# Phase 2
+```{r}
+# Create Model Matrices for Ridge/Lasso
+x <- model.matrix(cnt ~ . - casual - registered - cnt - dteday, data = bike_2011)[, -1]
+y <- bike_2011$cnt
+
+x_test <- model.matrix(cnt ~ . - casual - registered - cnt - dteday, data = bike_2012)[, -1]
+y_test <- bike_2012$cnt
+
+# Create Dataframes for PCR/PLS
+bike_2011_clean <- bike_2011 %>% select(-casual, -registered, -dteday)
+bike_2012_clean <- bike_2012 %>% select(-casual, -registered, -dteday)
+```
+
+## Phase 2 - Part 1a: Lasso & Ridge
+```{r}
+set.seed(123)
+
+# Fit Models with CV
+cv_ridge <- cv.glmnet(x, y, alpha = 0)
+cv_lasso <- cv.glmnet(x, y, alpha = 1)
+
+# Plot CV Curves for Optimal Lambda
+par(mfrow = c(1, 2))
+plot(cv_ridge)
+title("Ridge Cross-Validation Curve", line = 2.5)
+plot(cv_lasso)
+title("Lasso Cross-Validation Curve", line = 2.5)
+par(mfrow = c(1, 1))
+```
+
+```{r}
+# Print Optimal Lambdas
+cat("\n--- Optimal Lambdas ---\n")
+cat("Ridge Lambda Min:", cv_ridge$lambda.min, "\n")
+cat("Lasso Lambda Min:", cv_lasso$lambda.min, "\n")
+
+# Print Coefficients at Optimal Lambda
+cat("\n--- Ridge Coefficients (lambda.min) ---\n")
+print(coef(cv_ridge, s = "lambda.min"))
+cat("\n--- Lasso Coefficients (lambda.min) ---\n")
+print(coef(cv_lasso, s = "lambda.min"))
+```
+
+```{r}
+# Calculate Training RMSE
+pred_train_ridge <- predict(cv_ridge, newx = x, s = "lambda.min")
+pred_train_lasso <- predict(cv_lasso, newx = x, s = "lambda.min")
+
+cat("\n--- Training Set RMSE ---\n")
+cat("Ridge:", sqrt(mean((y - pred_train_ridge)^2)), "\n")
+cat("Lasso:", sqrt(mean((y - pred_train_lasso)^2)), "\n")
+```
+
+
+## Phase 2 - Part 1b: PCR and PLS
+```{r}
+set.seed(123)
+
+# Fit Models
+pcr_model <- pcr(cnt ~ ., data = bike_2011_clean, scale = TRUE, validation = "CV")
+pls_model <- plsr(cnt ~ ., data = bike_2011_clean, scale = TRUE, validation = "CV")
+
+# Plot RMSEP Curves for Component Selection
+par(mfrow = c(1, 2))
+plot(RMSEP(pcr_model), main = "PCR RMSEP")
+plot(RMSEP(pls_model), main = "PLS RMSEP")
+par(mfrow = c(1, 1))
+```
+
+```{r}
+# Print Summary
+cat("\n--- PCR Model Summary ---\n")
+summary(pcr_model)
+cat("\n--- PLS Model Summary ---\n")
+summary(pls_model)
+```
+
+```{r}
+# Optimal Components
+pcr_ncomp_opt <- which.min(RMSEP(pcr_model)$val[1,1,]) - 1
+pls_ncomp_opt <- which.min(RMSEP(pls_model)$val[1,1,]) - 1
+
+cat("\n--- Optimal Components ---\n")
+cat("PCR:", pcr_ncomp_opt, "\n")
+cat("PLS:", pls_ncomp_opt, "\n")
+```
+
+```{r}
+# Training RMSE
+pred_pcr_train <- predict(pcr_model, bike_2011_clean, ncomp = pcr_ncomp_opt)
+pred_pls_train <- predict(pls_model, bike_2011_clean, ncomp = pls_ncomp_opt)
+
+cat("\n--- Training Set RMSE ---\n")
+cat("PCR:", sqrt(mean((bike_2011_clean$cnt - pred_pcr_train)^2)), "\n")
+cat("PLS:", sqrt(mean((bike_2011_clean$cnt - pred_pls_train)^2)), "\n")
+```
+
+## Phase 2 - Part 2: GAM
+```{r}
+# Fit GAM with splines for temp, hum, windspeed
+gam_model <- gam(
+  cnt ~ season + mnth + holiday + weekday + workingday + weathersit +
+    s(temp, bs = "cs") + 
+    s(hum, bs = "cs") + 
+    s(windspeed, bs = "cs"),
+  data = bike_2011
+)
+
+# Print Summary
+cat("\n--- GAM Model Summary ---\n")
+summary(gam_model)
+```
+
+```{r}
+# Plot Partial Effects (all)
+plot(gam_model, pages = 1, all.terms = TRUE, main = "Gam Partial Effects")
+
+```
+
+```{r}
+# Plots 3 Spline Terms
+plot.gam(gam_model, select = 1, col = "blue", main = "Effect of Temperature")
+plot.gam(gam_model, select = 2, col = "darkgreen", main = "Effect of Humidity")
+plot.gam(gam_model, select = 3, col = "red", main = "Effect of Windspeed")
+layout(1)  # reset
+
+```
+
+```{r}
+# Training RMSE
+pred_gam_train <- predict(gam_model, newdata = bike_2011)
+train_rmse <- sqrt(mean((bike_2011$cnt - pred_gam_train)^2))
+
+cat("\n--- GAM Training Set RMSE ---\n")
+cat("GAM:", train_rmse, "\n")
+```
+
+## Phase 2 - Part 3: Test Set Evaluation and Final Model Selection
+```{r}
+calc_mae <- function(actual, predicted) { mean(abs(actual - predicted)) }
+
+# Predictions
+pred_ridge_test <- predict(cv_ridge, newx = x_test, s = "lambda.min")
+pred_lasso_test <- predict(cv_lasso, newx = x_test, s = "lambda.min")
+pred_pcr_test <- as.vector(predict(pcr_model, newdata = bike_2012_clean, ncomp = pcr_ncomp_opt))
+pred_pls_test <- as.vector(predict(pls_model, newdata = bike_2012_clean, ncomp = pls_ncomp_opt))
+pred_gam_test <- predict(gam_model, newdata = bike_2012)
+
+# Compile Results
+results <- data.frame(
+  Model = c("Ridge", "Lasso", "PCR", "PLS", "GAM"),
+  RMSE = c(
+    sqrt(mean((y_test - pred_ridge_test)^2)),
+    sqrt(mean((y_test - pred_lasso_test)^2)),
+    sqrt(mean((bike_2012_clean$cnt - pred_pcr_test)^2)),
+    sqrt(mean((bike_2012_clean$cnt - pred_pls_test)^2)),
+    sqrt(mean((bike_2012_clean$cnt - pred_gam_test)^2))
+  ),
+  MAE = c(
+    calc_mae(y_test, pred_ridge_test),
+    calc_mae(y_test, pred_lasso_test),
+    calc_mae(bike_2012_clean$cnt, pred_pcr_test),
+    calc_mae(bike_2012_clean$cnt, pred_pls_test),
+    calc_mae(bike_2012_clean$cnt, pred_gam_test)
+  )
+)
+
+cat("\n--- Final Test Set Performance (2012) ---\n")
+print(results)
+
+# Print Best Model
+best_model_row <- results[which.min(results$RMSE), ]
+cat("\n--- BEST MODEL SELECTED ---\n")
+print(best_model_row)
+```
+
+```{r}
+# --- Training Performance (2011) ---
+# Predictions on training data
+pred_gam_train <- predict(gam_model, newdata = bike_2011)
+
+# Residuals
+resid_train <- bike_2011$cnt - pred_gam_train
+
+# Training metrics
+rmse_2011 <- sqrt(mean(resid_train^2))
+mae_2011  <- mean(abs(resid_train))
+
+cat("\n--- GAM Training Performance (2011) ---\n")
+cat("RMSE:", rmse_2011, "\n")
+cat("MAE :", mae_2011,  "\n")
+
+
+# --- Test Performance (2012) ---
+# Predictions on test data
+pred_gam_test <- predict(gam_model, newdata = bike_2012)
+
+# Residuals
+resid_test <- bike_2012$cnt - pred_gam_test
+
+# Test metrics
+rmse_2012 <- sqrt(mean(resid_test^2))
+mae_2012  <- mean(abs(resid_test))
+
+cat("\n--- GAM Test Performance (2012) ---\n")
+cat("RMSE:", rmse_2012, "\n")
+cat("MAE :", mae_2012,  "\n")
+```
+
+```{r}
+# Observed vs Predicted Plot for GAM
+plot(
+  bike_2012$cnt, pred_gam_test,
+  xlab = "Observed Count",
+  ylab = "Predicted Count",
+  main = "Observed vs Predicted: GAM",
+  pch = 19, col = rgb(0, 0, 1, 0.4)
+)
+abline(0, 1, col = "red", lwd = 2)
+```
+
+
